@@ -1,4 +1,4 @@
-# 📡 vipersec-wifi-sec
+# 📡 vipersec-wifi-DOS
 
 > Wireless network auditing tool designed for 802.11 management frame analysis, network discovery, and Protected Management Frames (PMF / 802.11w) compliance research.
 
